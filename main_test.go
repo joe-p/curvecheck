@@ -1,12 +1,19 @@
 package curvecheck
 
 import (
+	"bufio"
 	"crypto/ed25519"
 	"crypto/sha256"
 	"crypto/sha512"
 	"encoding/hex"
+	"fmt"
+	"io"
 	"math/big"
 	"math/rand"
+	"os"
+	"os/exec"
+	"strings"
+	"sync"
 	"testing"
 
 	"filippo.io/edwards25519"
@@ -27,12 +34,99 @@ type sut struct {
 	decode func(b []byte) bool
 }
 
-// suts is the set of implementations under test. For now both entries just
-// mirror the oracle so the differential machinery is exercised end-to-end.
-// Swap these for real implementations (e.g. batched subprocess calls) later.
+// jsAlgorandSDK is the js-algorand-sdk implementation under test, driven as a
+// single long-lived `bun suts/js-algorand-sdk/main.ts` subprocess.
+var jsAlgorandSDK = &subprocessSUT{
+	name: "js-algorand-sdk",
+	args: []string{"bun", "suts/js-algorand-sdk/main.ts"},
+}
+
+// suts is the set of implementations under test.
 var suts = []sut{
-	{name: "TypeScript", decode: referenceDecode},
-	{name: "Python", decode: referenceDecode},
+	{name: "js-algorand-sdk", decode: jsAlgorandSDK.decode},
+}
+
+// subprocessSUT drives a decoder implementation over a persistent subprocess.
+// The process is started once (bun startup is not cheap) and each decode writes
+// one hex-encoded input line to its stdin and reads one verdict line back. A
+// mutex serializes the request/response exchange so concurrent callers can't
+// interleave lines on the shared pipe.
+type subprocessSUT struct {
+	name string
+	args []string
+
+	mu     sync.Mutex
+	cmd    *exec.Cmd
+	stdin  io.WriteCloser
+	stdout *bufio.Reader
+}
+
+// start launches the subprocess. Must be called once before decode.
+func (s *subprocessSUT) start() error {
+	cmd := exec.Command(s.args[0], s.args[1:]...)
+	cmd.Stderr = os.Stderr
+
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return fmt.Errorf("%s: stdin pipe: %w", s.name, err)
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return fmt.Errorf("%s: stdout pipe: %w", s.name, err)
+	}
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("%s: start %v: %w", s.name, s.args, err)
+	}
+
+	s.cmd = cmd
+	s.stdin = stdin
+	s.stdout = bufio.NewReader(stdout)
+	return nil
+}
+
+// stop shuts the subprocess down, closing its stdin so it exits cleanly.
+func (s *subprocessSUT) stop() {
+	if s.cmd == nil {
+		return
+	}
+	_ = s.stdin.Close()
+	_ = s.cmd.Wait()
+}
+
+// decode sends one input and returns the subprocess's verdict. It panics on any
+// IPC failure: a broken pipe or unparseable reply is a harness fault, not a
+// decode result, and must abort the test rather than be silently read as false.
+func (s *subprocessSUT) decode(b []byte) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if _, err := fmt.Fprintf(s.stdin, "%x\n", b); err != nil {
+		panic(fmt.Sprintf("%s: write input: %v", s.name, err))
+	}
+	line, err := s.stdout.ReadString('\n')
+	if err != nil {
+		panic(fmt.Sprintf("%s: read verdict: %v", s.name, err))
+	}
+	switch strings.TrimSpace(line) {
+	case "true":
+		return true
+	case "false":
+		return false
+	default:
+		panic(fmt.Sprintf("%s: unexpected verdict %q for enc=%x", s.name, line, b))
+	}
+}
+
+// TestMain starts the subprocess-backed SUTs before running the suite and tears
+// them down afterward.
+func TestMain(m *testing.M) {
+	if err := jsAlgorandSDK.start(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	code := m.Run()
+	jsAlgorandSDK.stop()
+	os.Exit(code)
 }
 
 // ---------------------------------------------------------------------------
