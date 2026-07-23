@@ -20,11 +20,19 @@ func referenceDecode(b []byte) bool {
 	return err == nil
 }
 
-// Placeholder for the TS side. For now it just mirrors the oracle so the
-// differential assertion is exercised end-to-end. Swap this for a batched
-// subprocess call later.
-func systemUnderTest(b []byte) bool {
-	return referenceDecode(b)
+// sut is a named decoder implementation under test. Every sut is checked
+// differentially against the reference oracle on every input.
+type sut struct {
+	name   string
+	decode func(b []byte) bool
+}
+
+// suts is the set of implementations under test. For now both entries just
+// mirror the oracle so the differential machinery is exercised end-to-end.
+// Swap these for real implementations (e.g. batched subprocess calls) later.
+var suts = []sut{
+	{name: "TypeScript", decode: referenceDecode},
+	{name: "Python", decode: referenceDecode},
 }
 
 // ---------------------------------------------------------------------------
@@ -341,9 +349,11 @@ func TestKnownAnswers(t *testing.T) {
 func assertAgree(t *testing.T, enc []byte, label string) {
 	t.Helper()
 	want := referenceDecode(enc)
-	got := systemUnderTest(enc)
-	if want != got {
-		t.Errorf("divergence [%s]: enc=%x reference=%v sut=%v", label, enc, want, got)
+	for _, s := range suts {
+		got := s.decode(enc)
+		if want != got {
+			t.Errorf("divergence [%s] sut=%s: enc=%x reference=%v sut=%v", label, s.name, enc, want, got)
+		}
 	}
 }
 
@@ -447,25 +457,27 @@ func TestDeterminismAndOrderIndependence(t *testing.T) {
 		inputs = append(inputs, encodeY(y, false), encodeY(y, true))
 	}
 
-	// Determinism: evaluating the same input twice agrees.
-	baseline := make(map[string]bool, len(inputs))
-	for _, in := range inputs {
-		key := hex.EncodeToString(in)
-		v := systemUnderTest(in)
-		if prev, ok := baseline[key]; ok && prev != v {
-			t.Errorf("non-deterministic verdict for %s: %v then %v", key, prev, v)
+	for _, s := range suts {
+		// Determinism: evaluating the same input twice agrees.
+		baseline := make(map[string]bool, len(inputs))
+		for _, in := range inputs {
+			key := hex.EncodeToString(in)
+			v := s.decode(in)
+			if prev, ok := baseline[key]; ok && prev != v {
+				t.Errorf("non-deterministic verdict for %s (sut=%s): %v then %v", key, s.name, prev, v)
+			}
+			baseline[key] = v
 		}
-		baseline[key] = v
-	}
 
-	// Order independence: shuffle and re-evaluate, compare against baseline.
-	r := rand.New(rand.NewSource(0xC0FFEE))
-	order := r.Perm(len(inputs))
-	for _, idx := range order {
-		in := inputs[idx]
-		key := hex.EncodeToString(in)
-		if got := systemUnderTest(in); got != baseline[key] {
-			t.Errorf("order-dependent verdict for %s: baseline=%v shuffled=%v", key, baseline[key], got)
+		// Order independence: shuffle and re-evaluate, compare against baseline.
+		r := rand.New(rand.NewSource(0xC0FFEE))
+		order := r.Perm(len(inputs))
+		for _, idx := range order {
+			in := inputs[idx]
+			key := hex.EncodeToString(in)
+			if got := s.decode(in); got != baseline[key] {
+				t.Errorf("order-dependent verdict for %s (sut=%s): baseline=%v shuffled=%v", key, s.name, baseline[key], got)
+			}
 		}
 	}
 }
@@ -631,9 +643,11 @@ func FuzzCurveCheck(f *testing.F) {
 			raw = fixed
 		}
 		want := referenceDecode(raw)
-		got := systemUnderTest(raw)
-		if want != got {
-			t.Fatalf("divergence: enc=%x reference=%v sut=%v", raw, want, got)
+		for _, s := range suts {
+			got := s.decode(raw)
+			if want != got {
+				t.Fatalf("divergence sut=%s: enc=%x reference=%v sut=%v", s.name, raw, want, got)
+			}
 		}
 	})
 }
