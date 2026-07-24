@@ -1,3 +1,6 @@
 [submodule "suts/ts/js-algorand-sdk"]
 	path = suts/js-algorand-sdk/js-algorand-sdk
 	url = https://github.com/algorand/js-algorand-sdk
+[submodule "suts/py-algorand-sdk/py-algorand-sdk"]
+	path = suts/py-algorand-sdk/py-algorand-sdk
+	url = https://github.com/algorand/py-algorand-sdk
