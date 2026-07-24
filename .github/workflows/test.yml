@@ -29,6 +29,15 @@ jobs:
         working-directory: suts/js-algorand-sdk
         run: bun install --frozen-lockfile
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install python dependencies
+        working-directory: suts/py-algorand-sdk
+        run: pip install ./py-algorand-sdk
+
       - name: Run tests
         run: go test -v ./...
 
