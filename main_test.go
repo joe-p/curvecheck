@@ -48,10 +48,18 @@ var pyAlgorandSDK = &subprocessSUT{
 	args: []string{"python3", "suts/py-algorand-sdk/main.py"},
 }
 
+// goAlgorandSDK is the go-algorand-sdk implementation under test, driven as a
+// single long-lived `go run suts/go-algorand-sdk/main.go` subprocess.
+var goAlgorandSDK = &subprocessSUT{
+	name: "go-algorand-sdk",
+	args: []string{"go", "run", "suts/go-algorand-sdk/main.go"},
+}
+
 // suts is the set of implementations under test.
 var suts = []sut{
 	{name: "js-algorand-sdk", decode: jsAlgorandSDK.decode},
 	{name: "py-algorand-sdk", decode: pyAlgorandSDK.decode},
+	{name: "go-algorand-sdk", decode: goAlgorandSDK.decode},
 }
 
 // subprocessSUT drives a decoder implementation over a persistent subprocess.
@@ -136,9 +144,15 @@ func TestMain(m *testing.M) {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+	if err := goAlgorandSDK.start(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+
 	code := m.Run()
 	jsAlgorandSDK.stop()
 	pyAlgorandSDK.stop()
+	goAlgorandSDK.stop()
 	os.Exit(code)
 }
 

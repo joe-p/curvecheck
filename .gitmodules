@@ -4,3 +4,6 @@
 [submodule "suts/py-algorand-sdk/py-algorand-sdk"]
 	path = suts/py-algorand-sdk/py-algorand-sdk
 	url = https://github.com/algorand/py-algorand-sdk
+[submodule "suts/go-algorand-sdk/go-algorand-sdk"]
+	path = suts/go-algorand-sdk/go-algorand-sdk
+	url = https://github.com/algorand/go-algorand-sdk
